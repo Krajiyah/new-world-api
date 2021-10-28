@@ -9,11 +9,23 @@ import (
 	"gorm.io/gorm"
 )
 
-type Item struct {
+type DBItem struct {
 	gorm.Model
-	NameKey    string `json:"nameKey" gorm:"unique_index"`
-	Name       string `json:"name"`
-	Attributes JSON   `json:"attributes"`
+	NameKey    string `gorm:"unique_index"`
+	Name       string
+	Attributes JSON
+}
+
+type Item struct {
+	NameKey    string                 `json:"nameKey"`
+	Name       string                 `json:"name"`
+	Attributes map[string]interface{} `json:"attributes"`
+}
+
+func (dbItem *DBItem) ToItem() *Item {
+	ret := &Item{Name: dbItem.Name, NameKey: dbItem.NameKey}
+	ret.Attributes, _ = dbItem.Attributes.GetMap()
+	return ret
 }
 
 type JSON json.RawMessage

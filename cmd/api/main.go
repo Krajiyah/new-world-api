@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 
 	"github.com/Krajiyah/new-world-api/internal"
 	"github.com/PuerkitoBio/goquery"
@@ -18,7 +20,7 @@ func main() {
 
 	db, err := internal.NewProdDB()
 	checkError(err)
-	checkError(db.AutoMigrate(&internal.Item{}))
+	checkError(db.AutoMigrate(&internal.DBItem{}))
 
 	e := echo.New()
 	e.GET("/ping", func(c echo.Context) error { return c.HTML(http.StatusOK, "pong") })
@@ -43,7 +45,7 @@ func handleGetItem(db *gorm.DB, logger *logrus.Logger) func(echo.Context) error 
 		item, err := getItemByNameViaDB(db, nameKey)
 		if err == nil {
 			log.WithField("item", item).Debug("got result (cached)")
-			return c.JSON(http.StatusOK, item)
+			return c.JSON(http.StatusOK, item.ToItem())
 		}
 
 		log.WithError(err).Warn("could not find item by name in db cache...looking on wiki")
@@ -56,21 +58,21 @@ func handleGetItem(db *gorm.DB, logger *logrus.Logger) func(echo.Context) error 
 				return c.HTML(http.StatusInternalServerError, "internal server error")
 			}
 			log.Debug("cached item in db")
-			return c.JSON(http.StatusOK, item)
+			return c.JSON(http.StatusOK, item.ToItem())
 		}
 
 		log.WithError(err).Warn("could not find item by name in wiki")
-		return c.JSON(http.StatusNotFound, "item not found")
+		return c.HTML(http.StatusNotFound, "item not found")
 	}
 }
 
-func getItemByNameViaDB(db *gorm.DB, nameKey string) (*internal.Item, error) {
-	item := &internal.Item{}
+func getItemByNameViaDB(db *gorm.DB, nameKey string) (*internal.DBItem, error) {
+	item := &internal.DBItem{}
 	err := db.Where("nameKey", nameKey).Find(item).Error
 	return item, err
 }
 
-func getItemByNameViaWiki(nameKey string) (*internal.Item, error) {
+func getItemByNameViaWiki(nameKey string) (*internal.DBItem, error) {
 	res, err := http.Get("https://newworld.fandom.com/wiki/" + nameKey)
 	if err != nil {
 		return nil, err
@@ -87,13 +89,13 @@ func getItemByNameViaWiki(nameKey string) (*internal.Item, error) {
 	}
 
 	attrs := map[string]interface{}{}
-	item := &internal.Item{NameKey: nameKey}
-	item.Name = doc.Find("#firstHeading").Text()
+	item := &internal.DBItem{NameKey: nameKey}
+	item.Name = strings.TrimSpace(doc.Find("#firstHeading").Text())
 
-	doc.Find(".pi-item .pi-data").Each(func(i int, s *goquery.Selection) {
-		label := s.Find(".pi-data-label").Text()
-		value := s.Find(".pi-data-value").Text()
-		attrs[label] = value
+	doc.Find(".pi-data").Each(func(i int, s *goquery.Selection) {
+		label := strings.TrimSpace(s.Find(".pi-data-label").Text())
+		value := strings.TrimSpace(s.Find(".pi-data-value").Text())
+		attrs[label] = parseValue(value)
 	})
 
 	attrsJson, err := internal.MapToJson(attrs)
@@ -103,4 +105,21 @@ func getItemByNameViaWiki(nameKey string) (*internal.Item, error) {
 
 	item.Attributes = attrsJson
 	return item, nil
+}
+
+func parseValue(s string) interface{} {
+	if s == "Yes" {
+		return true
+	}
+
+	if s == "No" {
+		return false
+	}
+
+	f, err := strconv.ParseFloat(s, 64)
+	if err == nil {
+		return f
+	}
+
+	return s
 }
